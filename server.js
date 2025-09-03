@@ -104,6 +104,11 @@ try {
   app.use('/api/bots', require('./src/routes/bots'));
   app.use('/api/files', require('./src/routes/files'));
   app.use('/api/logs', require('./src/routes/logs'));
+  app.use('/api/auth', require('./src/routes/auth'));
+  app.use('/api/backups', require('./src/routes/backups'));
+  app.use('/api/metrics', require('./src/routes/metrics'));
+  app.use('/api/github', require('./src/routes/github'));
+  app.use('/api/schedule', require('./src/routes/schedule'));
   logger.info('API routes loaded successfully');
 } catch (error) {
   logger.error('Failed to load API routes:', error);
@@ -111,6 +116,11 @@ try {
   app.use('/api/bots', (req, res) => res.status(503).json({ error: 'API temporarily unavailable' }));
   app.use('/api/files', (req, res) => res.status(503).json({ error: 'API temporarily unavailable' }));
   app.use('/api/logs', (req, res) => res.status(503).json({ error: 'API temporarily unavailable' }));
+  app.use('/api/auth', (req, res) => res.status(503).json({ error: 'API temporarily unavailable' }));
+  app.use('/api/backups', (req, res) => res.status(503).json({ error: 'API temporarily unavailable' }));
+  app.use('/api/metrics', (req, res) => res.status(503).json({ error: 'API temporarily unavailable' }));
+  app.use('/api/github', (req, res) => res.status(503).json({ error: 'API temporarily unavailable' }));
+  app.use('/api/schedule', (req, res) => res.status(503).json({ error: 'API temporarily unavailable' }));
 }
 
 // Static files (only in production)
