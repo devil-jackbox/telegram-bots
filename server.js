@@ -41,6 +41,10 @@ app.use(limiter);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Optional Supabase auth middleware (enforce by setting SUPABASE_AUTH_REQUIRED=true)
+const supabaseAuth = require('./src/middleware/supabaseAuth');
+app.use('/api', supabaseAuth);
+
 // Health check endpoint (must be first)
 app.get('/health', (req, res) => {
   res.json({ 
