@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Editor } from '@monaco-editor/react';
 import { 
@@ -17,7 +17,15 @@ import {
   Trash2,
   RefreshCw,
   Eye,
-  EyeOff
+  EyeOff,
+  Upload,
+  Download,
+  Code,
+  Sparkles,
+  Github,
+  Copy,
+  Zap,
+  X
 } from 'lucide-react';
 import { useBots } from '../contexts/BotContext';
 import { useSocket } from '../contexts/SocketContext';
@@ -43,6 +51,13 @@ const BotEditor = () => {
     { key: 'BOT_MODE', value: 'polling', isSecret: false }
   ]);
   const [autoDetectEnabled, setAutoDetectEnabled] = useState(true);
+  const [showSnippets, setShowSnippets] = useState(false);
+  const [showGitHubImport, setShowGitHubImport] = useState(false);
+  const [githubUrl, setGithubUrl] = useState('');
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
+  const autoSaveTimeoutRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   // Detect Android to enable native long-press selection by using a textarea fallback
   const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent || '');
@@ -69,6 +84,70 @@ const BotEditor = () => {
     'REGION',
     'TIMEZONE',
     'LANGUAGE'
+  ];
+
+  // Code snippets
+  const codeSnippets = [
+    {
+      name: 'Send Message',
+      code: `bot.sendMessage(chatId, 'Hello! 👋', {
+  reply_markup: {
+    inline_keyboard: [[
+      { text: 'Button 1', callback_data: 'btn1' },
+      { text: 'Button 2', callback_data: 'btn2' }
+    ]]
+  }
+});`
+    },
+    {
+      name: 'Handle Commands',
+      code: `bot.onText(/\\/start/, (msg) => {
+  const chatId = msg.chat.id;
+  bot.sendMessage(chatId, 'Welcome! 🎉');
+});`
+    },
+    {
+      name: 'Handle Callbacks',
+      code: `bot.on('callback_query', (callbackQuery) => {
+  const message = callbackQuery.message;
+  const data = callbackQuery.data;
+  
+  if (data === 'btn1') {
+    bot.answerCallbackQuery(callbackQuery.id, {
+      text: 'Button 1 clicked!'
+    });
+  }
+});`
+    },
+    {
+      name: 'Environment Variable',
+      code: `const apiKey = process.env.API_KEY;
+const isProduction = process.env.NODE_ENV === 'production';
+
+if (!apiKey) {
+  console.error('API_KEY is required');
+  process.exit(1);
+}`
+    },
+    {
+      name: 'Error Handling',
+      code: `try {
+  // Your bot logic here
+  await bot.sendMessage(chatId, 'Success!');
+} catch (error) {
+  console.error('Error:', error);
+  bot.sendMessage(chatId, 'Sorry, something went wrong!');
+}`
+    },
+    {
+      name: 'File Upload',
+      code: `bot.on('photo', async (msg) => {
+  const chatId = msg.chat.id;
+  const photo = msg.photo[msg.photo.length - 1];
+  
+  bot.sendMessage(chatId, \`Photo received! File ID: \${photo.file_id}\`);
+});`
+    }
   ];
   const [showSecrets, setShowSecrets] = useState(false);
   const [hasError, setHasError] = useState(false);
@@ -501,6 +580,229 @@ const BotEditor = () => {
     return JSON.stringify(error, null, 2);
   };
 
+  // Auto-save functionality
+  const autoSave = useCallback(async () => {
+    if (code !== originalCode && !saving) {
+      try {
+        await updateBotFile(botId, code);
+        setOriginalCode(code);
+        toast.success('Auto-saved!', { duration: 1000 });
+      } catch (error) {
+        console.error('Auto-save failed:', error);
+      }
+    }
+  }, [code, originalCode, saving, botId, updateBotFile]);
+
+  // Debounced auto-save
+  useEffect(() => {
+    if (autoSaveEnabled && code !== originalCode) {
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current);
+      }
+      autoSaveTimeoutRef.current = setTimeout(autoSave, 2000);
+    }
+    return () => {
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current);
+      }
+    };
+  }, [code, autoSaveEnabled, autoSave, originalCode]);
+
+  // Drag and drop handlers
+  const handleDragOver = useCallback((e) => {
+    e.preventDefault();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e) => {
+    e.preventDefault();
+    setIsDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback(async (e) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    
+    const files = Array.from(e.dataTransfer.files);
+    const textFile = files.find(file => file.type === 'text/plain' || file.name.endsWith('.js'));
+    
+    if (textFile) {
+      try {
+        const content = await textFile.text();
+        setCode(content);
+        toast.success('File imported successfully!');
+      } catch (error) {
+        toast.error('Failed to read file');
+      }
+    } else {
+      toast.error('Please drop a .js or .txt file');
+    }
+  }, []);
+
+  // File input handler
+  const handleFileInput = useCallback(async (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      try {
+        const content = await file.text();
+        setCode(content);
+        toast.success('File imported successfully!');
+      } catch (error) {
+        toast.error('Failed to read file');
+      }
+    }
+  }, []);
+
+  // GitHub import
+  const handleGitHubImport = useCallback(async () => {
+    if (!githubUrl) {
+      toast.error('Please enter a GitHub URL');
+      return;
+    }
+
+    try {
+      let rawUrl = githubUrl;
+      if (githubUrl.includes('github.com') && !githubUrl.includes('raw.githubusercontent.com')) {
+        rawUrl = githubUrl.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/');
+      }
+
+      const response = await fetch(rawUrl);
+      if (!response.ok) {
+        throw new Error('Failed to fetch file');
+      }
+      
+      const content = await response.text();
+      setCode(content);
+      setShowGitHubImport(false);
+      setGithubUrl('');
+      toast.success('Code imported from GitHub!');
+    } catch (error) {
+      toast.error('Failed to import from GitHub');
+    }
+  }, [githubUrl]);
+
+  // Insert snippet
+  const insertSnippet = useCallback((snippet) => {
+    if (editorInstance) {
+      const selection = editorInstance.getSelection();
+      const range = new editorInstance.Range(
+        selection.startLineNumber,
+        selection.startColumn,
+        selection.endLineNumber,
+        selection.endColumn
+      );
+      editorInstance.executeEdits('insert-snippet', [{
+        range: range,
+        text: snippet.code
+      }]);
+      setShowSnippets(false);
+      toast.success('Snippet inserted!');
+    }
+  }, [editorInstance]);
+
+  // Format code with Prettier (basic formatting)
+  const formatCode = useCallback(() => {
+    if (editorInstance) {
+      // Basic formatting - indent and clean up
+      const model = editorInstance.getModel();
+      const value = model.getValue();
+      
+      // Simple formatting: fix indentation and spacing
+      const formatted = value
+        .split('\n')
+        .map(line => {
+          // Basic indentation fix
+          const trimmed = line.trim();
+          if (trimmed === '') return '';
+          
+          // Count braces for indentation
+          const openBraces = (line.match(/\{/g) || []).length;
+          const closeBraces = (line.match(/\}/g) || []).length;
+          
+          return '  '.repeat(Math.max(0, openBraces - closeBraces)) + trimmed;
+        })
+        .join('\n');
+      
+      model.setValue(formatted);
+      toast.success('Code formatted!');
+    }
+  }, [editorInstance]);
+
+  // Export bot configuration
+  const exportBot = useCallback(() => {
+    const botData = {
+      name: bot.name,
+      code: code,
+      environmentVariables: environmentVariables,
+      timestamp: new Date().toISOString()
+    };
+    
+    const blob = new Blob([JSON.stringify(botData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${bot.name}-backup.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success('Bot exported successfully!');
+  }, [bot, code, environmentVariables]);
+
+  // Import bot configuration
+  const importBot = useCallback(async (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      try {
+        const content = await file.text();
+        const botData = JSON.parse(content);
+        
+        if (botData.code) setCode(botData.code);
+        if (botData.environmentVariables) setEnvironmentVariables(botData.environmentVariables);
+        
+        toast.success('Bot imported successfully!');
+      } catch (error) {
+        toast.error('Failed to import bot configuration');
+      }
+    }
+  }, []);
+
+  // Touch gesture handlers
+  const [touchStart, setTouchStart] = useState(null);
+  const [touchEnd, setTouchEnd] = useState(null);
+
+  const handleTouchStart = useCallback((e) => {
+    setTouchEnd(null);
+    setTouchStart(e.targetTouches[0].clientX);
+  }, []);
+
+  const handleTouchMove = useCallback((e) => {
+    setTouchEnd(e.targetTouches[0].clientX);
+  }, []);
+
+  const handleTouchEnd = useCallback(() => {
+    if (!touchStart || !touchEnd) return;
+    
+    const distance = touchStart - touchEnd;
+    const isLeftSwipe = distance > 50;
+    const isRightSwipe = distance < -50;
+
+    if (isLeftSwipe) {
+      // Swipe left - next tab
+      const tabs = ['editor', 'environment', 'errors', 'settings'];
+      const currentIndex = tabs.indexOf(activeTab);
+      if (currentIndex < tabs.length - 1) {
+        setActiveTab(tabs[currentIndex + 1]);
+      }
+    }
+    if (isRightSwipe) {
+      // Swipe right - previous tab
+      const tabs = ['editor', 'environment', 'errors', 'settings'];
+      const currentIndex = tabs.indexOf(activeTab);
+      if (currentIndex > 0) {
+        setActiveTab(tabs[currentIndex - 1]);
+      }
+    }
+  }, [touchStart, touchEnd, activeTab]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -633,8 +935,84 @@ const BotEditor = () => {
 
       {/* Content */}
       {activeTab === 'editor' && (
-        <div className={`card ${isFullscreen ? 'fixed inset-0 z-50 m-0 rounded-none' : ''}`}>
+        <div 
+          className={`card ${isFullscreen ? 'fixed inset-0 z-50 m-0 rounded-none' : ''}`}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+        >
           <div className={`${isFullscreen ? 'h-full' : 'h-96'} overflow-hidden relative`}>
+            {/* Drag overlay */}
+            {isDragOver && (
+              <div className="absolute inset-0 bg-blue-500 bg-opacity-20 border-2 border-dashed border-blue-500 z-20 flex items-center justify-center">
+                <div className="text-center text-blue-600">
+                  <Upload size={48} className="mx-auto mb-2" />
+                  <p className="text-lg font-semibold">Drop your .js or .txt file here</p>
+                </div>
+              </div>
+            )}
+
+            {/* Editor toolbar */}
+            <div className="absolute top-2 left-2 z-10 flex flex-wrap gap-2">
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="p-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-xs"
+                title="Import File"
+              >
+                <Upload size={14} />
+              </button>
+              <button
+                onClick={exportBot}
+                className="p-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors text-xs"
+                title="Export Bot"
+              >
+                <Download size={14} />
+              </button>
+              <button
+                onClick={() => document.getElementById('import-bot')?.click()}
+                className="p-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors text-xs"
+                title="Import Bot"
+              >
+                <Copy size={14} />
+              </button>
+              <button
+                onClick={() => setShowSnippets(!showSnippets)}
+                className="p-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 transition-colors text-xs"
+                title="Code Snippets"
+              >
+                <Code size={14} />
+              </button>
+              <button
+                onClick={formatCode}
+                className="p-2 bg-pink-600 text-white rounded-md hover:bg-pink-700 transition-colors text-xs"
+                title="Format Code"
+              >
+                <Sparkles size={14} />
+              </button>
+              <button
+                onClick={() => setShowGitHubImport(!showGitHubImport)}
+                className="p-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors text-xs"
+                title="Import from GitHub"
+              >
+                <Github size={14} />
+              </button>
+              <div className="flex items-center space-x-1">
+                <input
+                  type="checkbox"
+                  id="autoSave"
+                  checked={autoSaveEnabled}
+                  onChange={(e) => setAutoSaveEnabled(e.target.checked)}
+                  className="h-4 w-4 text-blue-600"
+                />
+                <label htmlFor="autoSave" className="text-xs text-white">
+                  Auto-save
+                </label>
+              </div>
+            </div>
+
             {/* Fullscreen toggle button */}
             <button
               onClick={toggleFullscreen}
@@ -725,7 +1103,99 @@ const BotEditor = () => {
                 }}
               />
             )}
+
+            {/* Hidden file inputs */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".js,.txt"
+              onChange={handleFileInput}
+              className="hidden"
+            />
+            <input
+              id="import-bot"
+              type="file"
+              accept=".json"
+              onChange={importBot}
+              className="hidden"
+            />
           </div>
+
+          {/* Code Snippets Modal */}
+          {showSnippets && (
+            <div className="absolute inset-0 bg-black bg-opacity-50 z-30 flex items-center justify-center">
+              <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-96 overflow-y-auto">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold">Code Snippets</h3>
+                  <button
+                    onClick={() => setShowSnippets(false)}
+                    className="text-gray-500 hover:text-gray-700"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {codeSnippets.map((snippet, index) => (
+                    <button
+                      key={index}
+                      onClick={() => insertSnippet(snippet)}
+                      className="p-3 text-left border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                      <div className="font-medium text-sm mb-1">{snippet.name}</div>
+                      <div className="text-xs text-gray-600 font-mono bg-gray-100 p-2 rounded">
+                        {snippet.code.split('\n')[0]}...
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* GitHub Import Modal */}
+          {showGitHubImport && (
+            <div className="absolute inset-0 bg-black bg-opacity-50 z-30 flex items-center justify-center">
+              <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold">Import from GitHub</h3>
+                  <button
+                    onClick={() => setShowGitHubImport(false)}
+                    className="text-gray-500 hover:text-gray-700"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      GitHub URL
+                    </label>
+                    <input
+                      type="url"
+                      value={githubUrl}
+                      onChange={(e) => setGithubUrl(e.target.value)}
+                      placeholder="https://github.com/user/repo/blob/main/bot.js"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div className="flex space-x-3">
+                    <button
+                      onClick={handleGitHubImport}
+                      className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition-colors"
+                    >
+                      Import
+                    </button>
+                    <button
+                      onClick={() => setShowGitHubImport(false)}
+                      className="flex-1 bg-gray-300 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-400 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
