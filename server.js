@@ -87,6 +87,15 @@ if (process.env.NODE_ENV !== 'production') {
   });
 }
 
+// Initialize MongoDB first
+const { connectMongo, Schedule } = require('./src/utils/db');
+
+connectMongo().then(() => {
+  logger.info('MongoDB connected');
+}).catch((e) => {
+  logger.error('MongoDB connection failed:', e);
+});
+
 // Initialize bot manager with error handling
 let botManager;
 try {

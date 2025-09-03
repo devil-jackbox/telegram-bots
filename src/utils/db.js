@@ -1,62 +1,49 @@
-const Database = require('better-sqlite3');
-const path = require('path');
-const fs = require('fs-extra');
+const mongoose = require('mongoose');
 
-let dbInstance = null;
+let isConnected = false;
 
-function getDb() {
-  if (dbInstance) return dbInstance;
-  const dbPath = path.join(__dirname, '../../data/app.db');
-  fs.ensureDirSync(path.dirname(dbPath));
-  const db = new Database(dbPath);
-
-  db.pragma('journal_mode = WAL');
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      email TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS metrics (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      key TEXT NOT NULL,
-      value INTEGER NOT NULL DEFAULT 0,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_metrics_key ON metrics(key);
-
-    CREATE TABLE IF NOT EXISTS schedules (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      bot_id TEXT NOT NULL,
-      action TEXT NOT NULL CHECK(action IN ('start','stop')),
-      cron TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-  `);
-
-  dbInstance = db;
-  return dbInstance;
+async function connectMongo() {
+  if (isConnected) return mongoose.connection;
+  const uri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/bot_platform';
+  await mongoose.connect(uri, { dbName: process.env.MONGODB_DB || undefined });
+  isConnected = true;
+  return mongoose.connection;
 }
 
-function incMetric(key, by = 1) {
-  const db = getDb();
-  const now = new Date().toISOString();
-  const upsert = db.prepare(`
-    INSERT INTO metrics (key, value, updated_at) VALUES (@key, @by, @now)
-    ON CONFLICT(key) DO UPDATE SET value = value + @by, updated_at = @now
-  `);
-  upsert.run({ key, by, now });
+const userSchema = new mongoose.Schema({
+  email: { type: String, unique: true, required: true },
+  password_hash: { type: String, required: true },
+  created_at: { type: Date, default: Date.now }
+});
+
+const metricSchema = new mongoose.Schema({
+  key: { type: String, unique: true, required: true },
+  value: { type: Number, default: 0 },
+  updated_at: { type: Date, default: Date.now }
+});
+
+const scheduleSchema = new mongoose.Schema({
+  bot_id: { type: String, required: true },
+  action: { type: String, enum: ['start','stop'], required: true },
+  cron: { type: String, required: true },
+  created_at: { type: Date, default: Date.now }
+});
+
+const User = mongoose.models.User || mongoose.model('User', userSchema);
+const Metric = mongoose.models.Metric || mongoose.model('Metric', metricSchema);
+const Schedule = mongoose.models.Schedule || mongoose.model('Schedule', scheduleSchema);
+
+async function incMetric(key, by = 1) {
+  await connectMongo();
+  const now = new Date();
+  await Metric.updateOne({ key }, { $inc: { value: by }, $set: { updated_at: now } }, { upsert: true });
 }
 
-function getMetrics() {
-  const db = getDb();
-  const rows = db.prepare('SELECT key, value, updated_at FROM metrics').all();
+async function getMetrics() {
+  await connectMongo();
+  const rows = await Metric.find({}).lean();
   return rows;
 }
 
-module.exports = { getDb, incMetric, getMetrics };
+module.exports = { connectMongo, User, Metric, Schedule, incMetric, getMetrics };
 
