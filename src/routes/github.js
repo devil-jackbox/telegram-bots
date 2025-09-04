@@ -1,10 +1,9 @@
 const express = require('express');
 const axios = require('axios');
-const auth = require('../middleware/auth');
 
 const router = express.Router();
 
-router.get('/raw', auth, async (req, res) => {
+router.get('/raw', async (req, res) => {
   try {
     const { url } = req.query;
     if (!url) return res.status(400).json({ success: false, error: 'url required' });

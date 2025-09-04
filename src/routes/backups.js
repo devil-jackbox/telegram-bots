@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const BotManager = require('../botManager');
-const auth = require('../middleware/auth');
 
 let botManager;
 try {
@@ -11,7 +10,7 @@ try {
 }
 
 // Export a bot configuration
-router.get('/:botId/export', auth, (req, res) => {
+router.get('/:botId/export', (req, res) => {
   try {
     const { botId } = req.params;
     const bot = botManager.getBot(botId);
@@ -30,7 +29,7 @@ router.get('/:botId/export', auth, (req, res) => {
 });
 
 // Import a bot configuration into an existing bot
-router.post('/:botId/import', auth, async (req, res) => {
+router.post('/:botId/import', async (req, res) => {
   try {
     const { botId } = req.params;
     const { name, code, environmentVariables } = req.body || {};

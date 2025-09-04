@@ -41,9 +41,7 @@ app.use(limiter);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Optional Supabase auth middleware (enforce by setting SUPABASE_AUTH_REQUIRED=true)
-const supabaseAuth = require('./src/middleware/supabaseAuth');
-app.use('/api', supabaseAuth);
+// Auth disabled per request; all /api routes are public
 
 // Health check endpoint (must be first)
 app.get('/health', (req, res) => {
@@ -117,7 +115,7 @@ try {
   app.use('/api/bots', require('./src/routes/bots'));
   app.use('/api/files', require('./src/routes/files'));
   app.use('/api/logs', require('./src/routes/logs'));
-  app.use('/api/auth', require('./src/routes/auth'));
+  // Auth routes removed per request (no authentication)
   app.use('/api/backups', require('./src/routes/backups'));
   app.use('/api/metrics', require('./src/routes/metrics'));
   app.use('/api/github', require('./src/routes/github'));
@@ -129,7 +127,6 @@ try {
   app.use('/api/bots', (req, res) => res.status(503).json({ error: 'API temporarily unavailable' }));
   app.use('/api/files', (req, res) => res.status(503).json({ error: 'API temporarily unavailable' }));
   app.use('/api/logs', (req, res) => res.status(503).json({ error: 'API temporarily unavailable' }));
-  app.use('/api/auth', (req, res) => res.status(503).json({ error: 'API temporarily unavailable' }));
   app.use('/api/backups', (req, res) => res.status(503).json({ error: 'API temporarily unavailable' }));
   app.use('/api/metrics', (req, res) => res.status(503).json({ error: 'API temporarily unavailable' }));
   app.use('/api/github', (req, res) => res.status(503).json({ error: 'API temporarily unavailable' }));

@@ -27,7 +27,6 @@
     "express-rate-limit": "^6.10.0",
     "helmet": "^7.0.0",
     "compression": "^1.7.4",
-    "jsonwebtoken": "^9.0.2",
     "bcryptjs": "^2.4.3",
     "mongoose": "^8.6.3",
     "node-cron": "^3.0.3",
