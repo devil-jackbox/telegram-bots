@@ -116,6 +116,8 @@ try {
   app.use('/api/files', require('./src/routes/files'));
   app.use('/api/logs', require('./src/routes/logs'));
   // Auth routes removed per request (no authentication)
+  app.use('/api/versions', require('./src/routes/versions'));
+  app.use('/api/import', require('./src/routes/import'));
   app.use('/api/backups', require('./src/routes/backups'));
   app.use('/api/metrics', require('./src/routes/metrics'));
   app.use('/api/github', require('./src/routes/github'));

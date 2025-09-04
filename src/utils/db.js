@@ -33,6 +33,18 @@ const User = mongoose.models.User || mongoose.model('User', userSchema);
 const Metric = mongoose.models.Metric || mongoose.model('Metric', metricSchema);
 const Schedule = mongoose.models.Schedule || mongoose.model('Schedule', scheduleSchema);
 
+// Version snapshots for bots
+const versionSchema = new mongoose.Schema({
+  bot_id: { type: String, required: true },
+  label: { type: String },
+  code: { type: String },
+  files: [{ path: String, content: String }],
+  environmentVariables: [{ key: String, value: String, isSecret: Boolean }],
+  created_at: { type: Date, default: Date.now }
+});
+
+const Version = mongoose.models.Version || mongoose.model('Version', versionSchema);
+
 async function incMetric(key, by = 1) {
   await connectMongo();
   const now = new Date();
@@ -45,5 +57,5 @@ async function getMetrics() {
   return rows;
 }
 
-module.exports = { connectMongo, User, Metric, Schedule, incMetric, getMetrics };
+module.exports = { connectMongo, User, Metric, Schedule, Version, incMetric, getMetrics };
 
