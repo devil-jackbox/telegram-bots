@@ -41,6 +41,8 @@ app.use(limiter);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Auth disabled per request; all /api routes are public
+
 // Health check endpoint (must be first)
 app.get('/health', (req, res) => {
   res.json({ 
@@ -87,6 +89,15 @@ if (process.env.NODE_ENV !== 'production') {
   });
 }
 
+// Initialize MongoDB first
+const { connectMongo, Schedule } = require('./src/utils/db');
+
+connectMongo().then(() => {
+  logger.info('MongoDB connected');
+}).catch((e) => {
+  logger.error('MongoDB connection failed:', e);
+});
+
 // Initialize bot manager with error handling
 let botManager;
 try {
@@ -104,6 +115,13 @@ try {
   app.use('/api/bots', require('./src/routes/bots'));
   app.use('/api/files', require('./src/routes/files'));
   app.use('/api/logs', require('./src/routes/logs'));
+  // Auth routes removed per request (no authentication)
+  app.use('/api/versions', require('./src/routes/versions'));
+  app.use('/api/import', require('./src/routes/import'));
+  app.use('/api/backups', require('./src/routes/backups'));
+  app.use('/api/metrics', require('./src/routes/metrics'));
+  app.use('/api/github', require('./src/routes/github'));
+  app.use('/api/schedule', require('./src/routes/schedule'));
   logger.info('API routes loaded successfully');
 } catch (error) {
   logger.error('Failed to load API routes:', error);
@@ -111,6 +129,10 @@ try {
   app.use('/api/bots', (req, res) => res.status(503).json({ error: 'API temporarily unavailable' }));
   app.use('/api/files', (req, res) => res.status(503).json({ error: 'API temporarily unavailable' }));
   app.use('/api/logs', (req, res) => res.status(503).json({ error: 'API temporarily unavailable' }));
+  app.use('/api/backups', (req, res) => res.status(503).json({ error: 'API temporarily unavailable' }));
+  app.use('/api/metrics', (req, res) => res.status(503).json({ error: 'API temporarily unavailable' }));
+  app.use('/api/github', (req, res) => res.status(503).json({ error: 'API temporarily unavailable' }));
+  app.use('/api/schedule', (req, res) => res.status(503).json({ error: 'API temporarily unavailable' }));
 }
 
 // Static files (only in production)
