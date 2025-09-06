@@ -58,6 +58,16 @@ const BotEditor = () => {
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
   const autoSaveTimeoutRef = useRef(null);
   const fileInputRef = useRef(null);
+  const [files, setFiles] = useState([]);
+  const [activeFile, setActiveFile] = useState('bot.js');
+  const [fileContents, setFileContents] = useState({});
+  const [showFileTree, setShowFileTree] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [diagnostics, setDiagnostics] = useState([]);
+  const [showVersions, setShowVersions] = useState(false);
+  const [versions, setVersions] = useState([]);
+  const [showSecretManager, setShowSecretManager] = useState(false);
+  const [showImportSources, setShowImportSources] = useState(false);
 
   // Detect Android to enable native long-press selection by using a textarea fallback
   const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent || '');
@@ -803,6 +813,199 @@ if (!apiKey) {
     }
   }, [touchStart, touchEnd, activeTab]);
 
+  // File management functions
+  const loadFiles = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/files/${botId}/structure`);
+      const data = await response.json();
+      if (data.success) {
+        setFiles(data.files);
+      }
+    } catch (error) {
+      console.error('Failed to load files:', error);
+    }
+  }, [botId]);
+
+  const loadFileContent = useCallback(async (filePath) => {
+    try {
+      const response = await fetch(`/api/files/${botId}/file?path=${encodeURIComponent(filePath)}`);
+      const data = await response.json();
+      if (data.success) {
+        setFileContents(prev => ({ ...prev, [filePath]: data.content }));
+      }
+    } catch (error) {
+      console.error('Failed to load file content:', error);
+    }
+  }, [botId]);
+
+  const saveFileContent = useCallback(async (filePath, content) => {
+    try {
+      const response = await fetch(`/api/files/${botId}/file`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: filePath, content })
+      });
+      const data = await response.json();
+      if (data.success) {
+        setFileContents(prev => ({ ...prev, [filePath]: content }));
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Failed to save file:', error);
+      return false;
+    }
+  }, [botId]);
+
+  const createFile = useCallback(async (filePath, content = '') => {
+    try {
+      const response = await fetch(`/api/files/${botId}/files`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: filePath, content })
+      });
+      const data = await response.json();
+      if (data.success) {
+        await loadFiles();
+        setFileContents(prev => ({ ...prev, [filePath]: content }));
+        setActiveFile(filePath);
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Failed to create file:', error);
+      return false;
+    }
+  }, [botId, loadFiles]);
+
+  const deleteFile = useCallback(async (filePath) => {
+    try {
+      const response = await fetch(`/api/files/${botId}/files`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: filePath })
+      });
+      const data = await response.json();
+      if (data.success) {
+        await loadFiles();
+        setFileContents(prev => {
+          const newContents = { ...prev };
+          delete newContents[filePath];
+          return newContents;
+        });
+        if (activeFile === filePath) {
+          setActiveFile('bot.js');
+        }
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Failed to delete file:', error);
+      return false;
+    }
+  }, [botId, loadFiles, activeFile]);
+
+  // Diagnostics functions
+  const runDiagnostics = useCallback(() => {
+    const issues = [];
+    const currentCode = fileContents[activeFile] || code;
+    
+    // Check for syntax errors
+    try {
+      new Function(currentCode);
+    } catch (error) {
+      issues.push({
+        type: 'error',
+        message: `Syntax Error: ${error.message}`,
+        line: error.lineNumber || 1
+      });
+    }
+    
+    // Check for missing environment variables
+    const envVarMatches = currentCode.match(/process\.env\.(\w+)/g) || [];
+    const usedEnvVars = [...new Set(envVarMatches.map(match => match.replace('process.env.', '')))];
+    const definedEnvVars = environmentVariables.map(env => env.key);
+    const missingEnvVars = usedEnvVars.filter(envVar => !definedEnvVars.includes(envVar));
+    
+    missingEnvVars.forEach(envVar => {
+      issues.push({
+        type: 'warning',
+        message: `Missing environment variable: ${envVar}`,
+        line: 1
+      });
+    });
+    
+    // Check for common issues
+    if (currentCode.includes('console.log') && !currentCode.includes('logger')) {
+      issues.push({
+        type: 'info',
+        message: 'Consider using logger instead of console.log for better log management',
+        line: 1
+      });
+    }
+    
+    setDiagnostics(issues);
+  }, [fileContents, activeFile, code, environmentVariables]);
+
+  // Version management functions
+  const loadVersions = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/versions/${botId}/snapshots`);
+      const data = await response.json();
+      if (data.success) {
+        setVersions(data.snapshots);
+      }
+    } catch (error) {
+      console.error('Failed to load versions:', error);
+    }
+  }, [botId]);
+
+  const createSnapshot = useCallback(async (label) => {
+    try {
+      const response = await fetch(`/api/versions/${botId}/snapshots`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          label,
+          code: fileContents[activeFile] || code,
+          files: files.map(f => ({ path: f.name, content: fileContents[f.name] || '' })),
+          environmentVariables
+        })
+      });
+      const data = await response.json();
+      if (data.success) {
+        await loadVersions();
+        toast.success('Snapshot created!');
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Failed to create snapshot:', error);
+      return false;
+    }
+  }, [botId, fileContents, activeFile, code, files, environmentVariables, loadVersions]);
+
+  // Load files on mount
+  useEffect(() => {
+    if (botId) {
+      loadFiles();
+    }
+  }, [botId, loadFiles]);
+
+  // Load file content when active file changes
+  useEffect(() => {
+    if (activeFile && !fileContents[activeFile]) {
+      loadFileContent(activeFile);
+    }
+  }, [activeFile, fileContents, loadFileContent]);
+
+  // Run diagnostics when code changes
+  useEffect(() => {
+    if (showDiagnostics) {
+      runDiagnostics();
+    }
+  }, [showDiagnostics, runDiagnostics]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -999,6 +1202,41 @@ if (!apiKey) {
               >
                 <Github size={14} />
               </button>
+              <button
+                onClick={() => setShowFileTree(!showFileTree)}
+                className="p-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-xs"
+                title="File Tree"
+              >
+                <FileText size={14} />
+              </button>
+              <button
+                onClick={() => setShowDiagnostics(!showDiagnostics)}
+                className="p-2 bg-yellow-600 text-white rounded-md hover:bg-yellow-700 transition-colors text-xs"
+                title="Diagnostics"
+              >
+                <AlertTriangle size={14} />
+              </button>
+              <button
+                onClick={() => setShowVersions(!showVersions)}
+                className="p-2 bg-teal-600 text-white rounded-md hover:bg-teal-700 transition-colors text-xs"
+                title="Version History"
+              >
+                <Clock size={14} />
+              </button>
+              <button
+                onClick={() => setShowSecretManager(!showSecretManager)}
+                className="p-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors text-xs"
+                title="Secret Manager"
+              >
+                <Eye size={14} />
+              </button>
+              <button
+                onClick={() => setShowImportSources(!showImportSources)}
+                className="p-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors text-xs"
+                title="Import Sources"
+              >
+                <Upload size={14} />
+              </button>
               <div className="flex items-center space-x-1">
                 <input
                   type="checkbox"
@@ -1191,6 +1429,313 @@ if (!apiKey) {
                     >
                       Cancel
                     </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* File Tree Modal */}
+          {showFileTree && (
+            <div className="absolute inset-0 bg-black bg-opacity-50 z-30 flex items-center justify-center">
+              <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-96 overflow-y-auto">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold">File Tree</h3>
+                  <div className="flex space-x-2">
+                    <button
+                      onClick={() => {
+                        const fileName = prompt('Enter file name:');
+                        if (fileName) createFile(fileName);
+                      }}
+                      className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
+                    >
+                      New File
+                    </button>
+                    <button
+                      onClick={() => setShowFileTree(false)}
+                      className="text-gray-500 hover:text-gray-700"
+                    >
+                      <X size={20} />
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  {files.map((file, index) => (
+                    <div key={index} className="flex items-center justify-between p-2 hover:bg-gray-50 rounded">
+                      <button
+                        onClick={() => {
+                          setActiveFile(file.name);
+                          setShowFileTree(false);
+                        }}
+                        className="flex items-center space-x-2 text-left flex-1"
+                      >
+                        <FileText size={16} />
+                        <span className={activeFile === file.name ? 'font-semibold text-blue-600' : ''}>
+                          {file.name}
+                        </span>
+                      </button>
+                      <button
+                        onClick={() => deleteFile(file.name)}
+                        className="text-red-500 hover:text-red-700 p-1"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Diagnostics Modal */}
+          {showDiagnostics && (
+            <div className="absolute inset-0 bg-black bg-opacity-50 z-30 flex items-center justify-center">
+              <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-96 overflow-y-auto">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold">Live Diagnostics</h3>
+                  <div className="flex space-x-2">
+                    <button
+                      onClick={runDiagnostics}
+                      className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
+                    >
+                      Refresh
+                    </button>
+                    <button
+                      onClick={() => setShowDiagnostics(false)}
+                      className="text-gray-500 hover:text-gray-700"
+                    >
+                      <X size={20} />
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {diagnostics.length === 0 ? (
+                    <p className="text-gray-500">No issues found!</p>
+                  ) : (
+                    diagnostics.map((issue, index) => (
+                      <div key={index} className={`p-3 rounded border-l-4 ${
+                        issue.type === 'error' ? 'bg-red-50 border-red-500' :
+                        issue.type === 'warning' ? 'bg-yellow-50 border-yellow-500' :
+                        'bg-blue-50 border-blue-500'
+                      }`}>
+                        <div className="flex items-center space-x-2">
+                          <AlertTriangle size={16} className={
+                            issue.type === 'error' ? 'text-red-500' :
+                            issue.type === 'warning' ? 'text-yellow-500' :
+                            'text-blue-500'
+                          } />
+                          <span className="font-medium">{issue.message}</span>
+                        </div>
+                        {issue.line && (
+                          <p className="text-sm text-gray-600 mt-1">Line {issue.line}</p>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Version Timeline Modal */}
+          {showVersions && (
+            <div className="absolute inset-0 bg-black bg-opacity-50 z-30 flex items-center justify-center">
+              <div className="bg-white rounded-lg p-6 max-w-4xl w-full mx-4 max-h-96 overflow-y-auto">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold">Version History</h3>
+                  <div className="flex space-x-2">
+                    <button
+                      onClick={() => {
+                        const label = prompt('Enter snapshot label:');
+                        if (label) createSnapshot(label);
+                      }}
+                      className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
+                    >
+                      Create Snapshot
+                    </button>
+                    <button
+                      onClick={() => setShowVersions(false)}
+                      className="text-gray-500 hover:text-gray-700"
+                    >
+                      <X size={20} />
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {versions.length === 0 ? (
+                    <p className="text-gray-500">No snapshots yet. Create one to track changes!</p>
+                  ) : (
+                    versions.map((version, index) => (
+                      <div key={version.id} className="p-3 border rounded hover:bg-gray-50">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <h4 className="font-medium">{version.label || `Snapshot ${index + 1}`}</h4>
+                            <p className="text-sm text-gray-600">
+                              {new Date(version.created_at).toLocaleString()}
+                            </p>
+                          </div>
+                          <div className="flex space-x-2">
+                            <button
+                              onClick={() => {
+                                // TODO: Implement diff view
+                                toast.info('Diff view coming soon!');
+                              }}
+                              className="px-2 py-1 bg-gray-600 text-white rounded text-xs hover:bg-gray-700"
+                            >
+                              View Diff
+                            </button>
+                            <button
+                              onClick={() => {
+                                // TODO: Implement restore
+                                toast.info('Restore coming soon!');
+                              }}
+                              className="px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700"
+                            >
+                              Restore
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Secret Manager Modal */}
+          {showSecretManager && (
+            <div className="absolute inset-0 bg-black bg-opacity-50 z-30 flex items-center justify-center">
+              <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-96 overflow-y-auto">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold">Secret Manager</h3>
+                  <button
+                    onClick={() => setShowSecretManager(false)}
+                    className="text-gray-500 hover:text-gray-700"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+                <div className="space-y-3">
+                  {environmentVariables.map((envVar, index) => (
+                    <div key={index} className="p-3 border rounded">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-medium">{envVar.key}</span>
+                        <div className="flex space-x-2">
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(envVar.value);
+                              toast.success('Copied to clipboard!');
+                            }}
+                            className="px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700"
+                          >
+                            Copy
+                          </button>
+                          <button
+                            onClick={() => {
+                              const newValue = prompt(`Enter new value for ${envVar.key}:`);
+                              if (newValue !== null) {
+                                const newEnvVars = [...environmentVariables];
+                                newEnvVars[index].value = newValue;
+                                setEnvironmentVariables(newEnvVars);
+                                toast.success('Value updated!');
+                              }
+                            }}
+                            className="px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700"
+                          >
+                            Update
+                          </button>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <input
+                          type={envVar.isSecret ? 'password' : 'text'}
+                          value={envVar.value}
+                          readOnly
+                          className="flex-1 px-2 py-1 border rounded text-sm font-mono"
+                        />
+                        <button
+                          onClick={() => {
+                            const newEnvVars = [...environmentVariables];
+                            newEnvVars[index].isSecret = !envVar.isSecret;
+                            setEnvironmentVariables(newEnvVars);
+                          }}
+                          className="px-2 py-1 bg-gray-600 text-white rounded text-xs hover:bg-gray-700"
+                        >
+                          {envVar.isSecret ? 'Show' : 'Hide'}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Import Sources Modal */}
+          {showImportSources && (
+            <div className="absolute inset-0 bg-black bg-opacity-50 z-30 flex items-center justify-center">
+              <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-96 overflow-y-auto">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold">Import Sources</h3>
+                  <button
+                    onClick={() => setShowImportSources(false)}
+                    className="text-gray-500 hover:text-gray-700"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      GitHub Gist URL
+                    </label>
+                    <div className="flex space-x-2">
+                      <input
+                        type="url"
+                        placeholder="https://gist.github.com/username/gistid"
+                        className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <button
+                        onClick={() => toast.info('Gist import coming soon!')}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                      >
+                        Import
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Pastebin URL
+                    </label>
+                    <div className="flex space-x-2">
+                      <input
+                        type="url"
+                        placeholder="https://pastebin.com/raw/abc123"
+                        className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <button
+                        onClick={() => toast.info('Pastebin import coming soon!')}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                      >
+                        Import
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      ZIP Upload
+                    </label>
+                    <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center">
+                      <Upload size={32} className="mx-auto text-gray-400 mb-2" />
+                      <p className="text-gray-600">Drop ZIP file here or click to browse</p>
+                      <input
+                        type="file"
+                        accept=".zip"
+                        className="hidden"
+                        onChange={() => toast.info('ZIP import coming soon!')}
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
